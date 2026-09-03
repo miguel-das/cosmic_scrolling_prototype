@@ -1,0 +1,15 @@
+[Desktop Entry]
+Name=Window Layout (Development)
+Comment=Test Floating, Tiling, and Scrolling without replacing the system tiling applet
+Type=Application
+Exec=cosmic-applet-window-layout-test
+Terminal=false
+Categories=COSMIC;
+Keywords=COSMIC;Applet;Floating;Tiling;Scrolling;Development;Workspace;
+Icon=com.system76.CosmicAppletWindowLayoutTest-symbolic
+StartupNotify=true
+NoDisplay=true
+X-CosmicApplet=true
+X-CosmicShrinkable=true
+X-HostWaylandDisplay=true
+X-CosmicHoverPopup=Auto

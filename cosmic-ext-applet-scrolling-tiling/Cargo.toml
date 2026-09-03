@@ -1,0 +1,23 @@
+[package]
+name = "cosmic-applet-tiling"
+version = "1.0.15"
+edition = "2024"
+license = "GPL-3.0-only"
+
+[features]
+parallel-test-install = []
+
+[dependencies]
+libcosmic.workspace = true
+anyhow.workspace = true
+cctk.workspace = true
+cosmic-comp-config = { path = "../cosmic-comp/cosmic-comp-config" }
+cosmic-protocols.workspace = true
+i18n-embed-fl.workspace = true
+i18n-embed.workspace = true
+rust-embed.workspace = true
+rustc-hash.workspace = true
+tokio.workspace = true
+tracing-log.workspace = true
+tracing-subscriber.workspace = true
+tracing.workspace = true

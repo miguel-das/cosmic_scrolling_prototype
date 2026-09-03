@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=COSMIC Scrolling Test
+Comment=Run COSMIC with the development scrolling tiling compositor
+Exec=/usr/local/bin/cosmic-scrolling-test-session
+TryExec=/usr/local/bin/cosmic-scrolling-test-session
+Type=Application
+X-CosmicScrollingOwner=cosmic-scrolling-prototype-v1
