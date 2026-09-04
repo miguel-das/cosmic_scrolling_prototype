@@ -7,6 +7,10 @@
 >
 > **Written with GPT 5.6 Sol.** This code was AI-generated step by step and tested by myself.
 
+## Demo
+
+[▶ Watch the demo](./demo.webm)
+
 This project installs a separate **COSMIC Scrolling Test** login session using:
 
 - the scrolling compositor from `cosmic-comp-scrolling-prototype`; and
