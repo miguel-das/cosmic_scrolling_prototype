@@ -9,7 +9,7 @@
 
 ## Demo
 
-[▶ Watch the demo](./demo.webm)
+[▶ Watch the demo](./demo.mp4)
 
 This project installs a separate **COSMIC Scrolling Test** login session using:
 
