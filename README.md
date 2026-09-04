@@ -9,7 +9,7 @@
 
 ## Demo
 
-[▶ Watch the demo](./demo.mp4)
+https://github.com/user-attachments/assets/8e0f6924-a481-40ec-9e68-0179c21bd718
 
 This project installs a separate **COSMIC Scrolling Test** login session using:
 
