@@ -4,7 +4,6 @@ set -eu
 
 OWNER_ID=cosmic-scrolling-prototype-v1
 UPSTREAM_URL=https://github.com/pop-os/cosmic-applets.git
-SYSTEM_LAUNCHER=/usr/local/bin/cosmic-scrolling-test-session
 SYSTEM_DESKTOP=/usr/share/wayland-sessions/cosmic-scrolling-test.desktop
 
 die() {
@@ -20,14 +19,6 @@ need_command() {
     command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"
 }
 
-run_as_root() {
-    if [ "$(id -u)" -eq 0 ]; then
-        "$@"
-    else
-        sudo "$@"
-    fi
-}
-
 safe_remove_tree() {
     candidate=$1
     case "$candidate" in
@@ -39,15 +30,20 @@ safe_remove_tree() {
 }
 
 INSTALL_SESSION=true
+DESTDIR=${DESTDIR-}
+while [ "$#" -gt 0 ]; do
 case "${1:-}" in
     -h|--help)
         cat <<'EOF'
-Usage: ./install.sh [--build-only]
+Usage: ./install.sh [--build-only] [--destdir ABSOLUTE_DIRECTORY]
 
 Build and install the isolated COSMIC Scrolling Test login session.
 
   --build-only        Build both programs and refresh the private applet prefix
                       without installing or changing system greeter files.
+
+  --destdir DIR       Stage greeter files under DIR without sudo. Builds and
+                      the private prefix still live in this project.
 
 Environment:
   COSMIC_APPLETS_REV  Exact cosmic-applets Git revision. If unset, the final
@@ -56,11 +52,18 @@ Environment:
 EOF
         exit 0
         ;;
-    --build-only) INSTALL_SESSION=false ;;
-    '') ;;
+    --build-only) INSTALL_SESSION=false; shift ;;
+    --destdir)
+        [ "$#" -ge 2 ] || die "--destdir requires an absolute directory"
+        DESTDIR=$2; shift 2 ;;
+    '') die "empty argument" ;;
     *) die "unknown argument: $1 (try --help)" ;;
 esac
-[ "$#" -le 1 ] || die "too many arguments (try --help)"
+done
+case "$DESTDIR" in
+    ""|/*) ;;
+    *) die "DESTDIR must be an absolute directory" ;;
+esac
 
 need_command readlink
 SCRIPT_PATH=$(readlink -f -- "$0") || die "cannot resolve the installer path"
@@ -80,12 +83,11 @@ SOURCE_DESKTOP="$COMP_ROOT/cosmic-scrolling-test.desktop"
 for command_name in awk basename cargo cat chmod cp git grep install ln mkdir mktemp mv rm tar; do
     need_command "$command_name"
 done
-if [ "$INSTALL_SESSION" = true ]; then
+if [ "$INSTALL_SESSION" = true ] && [ -z "$DESTDIR" ]; then
     need_command sudo
 fi
 
 [ -f "$COMP_ROOT/Cargo.toml" ] || die "missing compositor source: $COMP_ROOT"
-[ -f "$COMP_ROOT/PROJECT_HANDOFF.md" ] || die "missing compositor handoff file"
 [ -f "$APPLET_SOURCE/Cargo.toml" ] || die "missing applet source: $APPLET_SOURCE"
 [ -f "$APPLET_SOURCE/data/com.system76.CosmicAppletTiling.desktop" ] \
     || die "missing applet desktop entry"
@@ -93,10 +95,22 @@ fi
 [ -f "$SOURCE_LAUNCHER" ] || die "missing session launcher: $SOURCE_LAUNCHER"
 [ -f "$SOURCE_DESKTOP" ] || die "missing session desktop entry: $SOURCE_DESKTOP"
 
+# Do not follow redirected installation directories when writing/removing files.
+for owned_directory in "$STATE_ROOT" "$PREFIX" "$PREFIX/bin" "$PREFIX/share" \
+    "$PREFIX/share/applications" "$PREFIX/share/icons" \
+    "$PREFIX/share/icons/hicolor" "$PREFIX/share/icons/hicolor/scalable" \
+    "$PREFIX/share/icons/hicolor/scalable/apps"; do
+    [ ! -L "$owned_directory" ] || die "refusing a symlinked installation directory: $owned_directory"
+done
+[ ! -L "$STATE_ROOT/manifest" ] || die "refusing a symlinked ownership manifest"
+
 if [ -e "$STATE_ROOT/manifest" ]; then
     grep -q "^owner=$OWNER_ID\$" "$STATE_ROOT/manifest" \
         || die "refusing to use state owned by another installer: $STATE_ROOT"
-elif [ -e "$PREFIX/bin/cosmic-applet-tiling" ] \
+elif [ -L "$PREFIX/bin/cosmic-comp" ] \
+    || [ -e "$PREFIX/bin/cosmic-comp" ] \
+    || [ -L "$PREFIX/bin/cosmic-applet-tiling" ] \
+    || [ -e "$PREFIX/bin/cosmic-applet-tiling" ] \
     || [ -e "$PREFIX/share/applications/com.system76.CosmicAppletTiling.desktop" ]; then
     die "refusing to overwrite an unowned private applet prefix: $PREFIX"
 fi
@@ -143,7 +157,6 @@ else
 fi
 
 note "Selecting cosmic-applets revision $APPLETS_REV..."
-git -C "$UPSTREAM_REPO" fetch origin
 if RESOLVED_REV=$(git -C "$UPSTREAM_REPO" rev-parse --verify "$APPLETS_REV^{commit}" 2>/dev/null); then
     :
 else
@@ -156,11 +169,15 @@ git -C "$UPSTREAM_REPO" switch --detach "$RESOLVED_REV"
 STAGING_WORKSPACE=$(mktemp -d "$STATE_ROOT/build-workspace.new.XXXXXX")
 ARCHIVE_FILE="$STATE_ROOT/cosmic-applets-$RESOLVED_REV.tar"
 cleanup_staging() {
-    [ -n "${STAGING_WORKSPACE:-}" ] && [ ! -e "$STAGING_WORKSPACE" ] \
-        || safe_remove_tree "$STAGING_WORKSPACE"
+    if [ -n "${STAGING_WORKSPACE:-}" ]; then
+        safe_remove_tree "$STAGING_WORKSPACE"
+    fi
     rm -f -- "$ARCHIVE_FILE"
 }
-trap cleanup_staging EXIT HUP INT TERM
+trap cleanup_staging EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 git -C "$UPSTREAM_REPO" archive --format=tar --output="$ARCHIVE_FILE" HEAD
 tar -xf "$ARCHIVE_FILE" -C "$STAGING_WORKSPACE"
@@ -177,7 +194,7 @@ awk '
     }
     /^members = \[/ {
         print "members = [\"cosmic-applet-tiling\"]"
-        in_members = 1
+        in_members = ($0 !~ /\]/)
         next
     }
     in_members {
@@ -247,7 +264,7 @@ awk '
 ' "$LOCK_FILE" >"$LOCK_FILE.new"
 mv -- "$LOCK_FILE.new" "$LOCK_FILE"
 
-note "Building the modified Window Layout applet..."
+note "Testing and building the modified Window Layout applet..."
 # The upstream lock records a Git-sourced cosmic-comp-config 0.1.0, while this
 # project intentionally substitutes the modified source as a path package.
 # Reconcile only that package in the disposable workspace, then require the
@@ -255,6 +272,9 @@ note "Building the modified Window Layout applet..."
 CARGO_TARGET_DIR="$CARGO_TARGET" cargo update \
     --manifest-path "$STAGING_WORKSPACE/Cargo.toml" \
     -p cosmic-comp-config
+CARGO_TARGET_DIR="$CARGO_TARGET" cargo test --locked \
+    --manifest-path "$STAGING_WORKSPACE/Cargo.toml" \
+    -p cosmic-applet-tiling
 CARGO_TARGET_DIR="$CARGO_TARGET" cargo build --locked \
     --manifest-path "$STAGING_WORKSPACE/Cargo.toml" \
     -p cosmic-applet-tiling
@@ -268,10 +288,11 @@ mv -- "$STAGING_WORKSPACE" "$BUILD_WORKSPACE"
 STAGING_WORKSPACE=
 trap - EXIT HUP INT TERM
 
-install -m 0755 "$APPLET_BINARY" "$PREFIX/bin/cosmic-applet-tiling"
+install -m 0755 "$APPLET_BINARY" "$PREFIX/bin/cosmic-applet-tiling.new"
+mv -fT -- "$PREFIX/bin/cosmic-applet-tiling.new" "$PREFIX/bin/cosmic-applet-tiling"
 # This path is relative to .cosmic-scrolling/prefix/bin, keeping the symlink
 # portable and free of checkout/user-specific path information.
-ln -sfn -- ../../../cosmic-comp-scrolling-prototype/target/debug/cosmic-comp \
+ln -sfnT -- ../../../cosmic-comp-scrolling-prototype/target/debug/cosmic-comp \
     "$PREFIX/bin/cosmic-comp"
 PRIVATE_DESKTOP="$PREFIX/share/applications/com.system76.CosmicAppletTiling.desktop"
 # COSMIC applets are hidden panel plugins and do not need an application-menu
@@ -295,7 +316,6 @@ applet=.cosmic-scrolling/prefix/bin/cosmic-applet-tiling
 launcher=cosmic-comp-scrolling-prototype/start-scrolling-session.sh
 EOF
 
-chmod 0755 "$SOURCE_LAUNCHER"
 
 if [ "$INSTALL_SESSION" = false ]; then
     note ""
@@ -307,39 +327,19 @@ if [ "$INSTALL_SESSION" = false ]; then
     exit 0
 fi
 
-if [ -e "$SYSTEM_LAUNCHER" ] || [ -L "$SYSTEM_LAUNCHER" ]; then
-    if [ -L "$SYSTEM_LAUNCHER" ]; then
-        OLD_TARGET=$(readlink "$SYSTEM_LAUNCHER" 2>/dev/null || true)
-        case "$OLD_TARGET" in
-            "$SOURCE_LAUNCHER"|*/start-scrolling-session.sh) ;;
-            *) die "refusing to replace unrelated symlink $SYSTEM_LAUNCHER -> ${OLD_TARGET:-<unreadable>}" ;;
-        esac
-    else
-        die "refusing to replace non-symlink path: $SYSTEM_LAUNCHER"
-    fi
-fi
-
-if [ -e "$SYSTEM_DESKTOP" ]; then
-    if grep -q "^X-CosmicScrollingOwner=$OWNER_ID\$" "$SYSTEM_DESKTOP" 2>/dev/null; then
-        :
-    elif grep -q '^Name=COSMIC Scrolling Test$' "$SYSTEM_DESKTOP" 2>/dev/null; then
-        note "Migrating the existing legacy COSMIC Scrolling Test desktop entry."
-    else
-        die "refusing to replace unrelated desktop entry: $SYSTEM_DESKTOP"
-    fi
-fi
-
-note "Installing the greeter entry (administrator authentication may be requested)..."
-run_as_root install -d -m 0755 "$(dirname -- "$SYSTEM_LAUNCHER")"
-run_as_root ln -sfn "$SOURCE_LAUNCHER" "$SYSTEM_LAUNCHER"
-run_as_root install -D -m 0644 "$SOURCE_DESKTOP" "$SYSTEM_DESKTOP"
+note "Installing the greeter entry..."
+"$COMP_ROOT/install-scrolling-session.sh" --destdir "$DESTDIR"
 
 note ""
 note "Installed COSMIC Scrolling Test."
 note "  compositor: $COMPOSITOR"
 note "  applet:     $PREFIX/bin/cosmic-applet-tiling"
 note "  revision:   $RESOLVED_REV"
-note "  session:    $SYSTEM_DESKTOP"
+note "  session:    $DESTDIR$SYSTEM_DESKTOP"
 note ""
-note "Log out, choose 'COSMIC Scrolling Test' in the greeter, and log in."
+if [ -z "$DESTDIR" ]; then
+    note "Log out, choose 'COSMIC Scrolling Test' in the greeter, and log in."
+else
+    note "Staging is for verification; the live greeter was not changed."
+fi
 note "Run ./install.sh again after moving this directory or rebuilding either project."

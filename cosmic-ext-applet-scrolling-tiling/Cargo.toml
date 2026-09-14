@@ -15,7 +15,9 @@ cosmic-comp-config = { path = "../cosmic-comp/cosmic-comp-config" }
 cosmic-protocols.workspace = true
 i18n-embed-fl.workspace = true
 i18n-embed.workspace = true
-rust-embed.workspace = true
+# Debug binaries are installed after the temporary build workspace is moved.
+# Embed translations instead of looking them up at the compile-time source path.
+rust-embed = { workspace = true, features = ["debug-embed"] }
 rustc-hash.workspace = true
 tokio.workspace = true
 tracing-log.workspace = true

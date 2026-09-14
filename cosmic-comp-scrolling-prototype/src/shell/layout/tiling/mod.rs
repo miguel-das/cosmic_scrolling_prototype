@@ -5145,6 +5145,7 @@ impl TilingLayout {
             geometries,
             old_geometries,
             is_overview,
+            self.tiling_engine == TilingEngine::Scrolling,
             seat,
             focused,
             &self.output,
@@ -6284,6 +6285,7 @@ fn render_new_tree_windows<R>(
     geometries: Option<HashMap<NodeId, Rectangle<i32, Local>>>,
     old_geometries: Option<HashMap<NodeId, Rectangle<i32, Local>>>,
     is_overview: bool,
+    is_scrolling: bool,
     seat: Option<&Seat<State>>,
     focused: Option<&CosmicMapped>,
     output: &Output,
@@ -6609,11 +6611,17 @@ fn render_new_tree_windows<R>(
                 let elem_geometry = committed_geometry.to_physical_precise_round(output_scale);
 
                 let scale = geo.size.to_f64() / original_geo.size.to_f64();
-                let constrain_animated_width =
-                    tiled_window_has_animated_width(is_overview, animating, &geo, original_geo);
+                let constrain_animated_width = tiled_window_has_animated_width(
+                    is_scrolling,
+                    is_overview,
+                    animating,
+                    &geo,
+                    original_geo,
+                );
                 let constrain_live_resize = !is_overview && live_resize_tiles.contains(&node_id);
                 let constrain_from_source = constrain_animated_width || constrain_live_resize;
                 let max_size = tiled_window_render_max_size(
+                    is_scrolling,
                     is_overview,
                     animating,
                     constrain_live_resize,
@@ -6670,8 +6678,8 @@ fn render_new_tree_windows<R>(
                     x => Some(x),
                 };
 
-                // Animated mapped elements are generated at the authoritative
-                // target size and constrained exactly once to `geo`. Generating
+                // Scrolling width animations generate elements at the target
+                // size and constrain them exactly once to `geo`. Generating
                 // borders or shadows at `geo` before stretching them from the
                 // target geometry applies the width interpolation twice and
                 // leaves a target-like edge inside the window.
@@ -6797,6 +6805,7 @@ fn render_new_tree_windows<R>(
 }
 
 fn tiled_window_render_max_size(
+    is_scrolling: bool,
     is_overview: bool,
     animating: bool,
     live_resize: bool,
@@ -6809,6 +6818,7 @@ fn tiled_window_render_max_size(
     } else if live_resize {
         Some(committed_size)
     } else if tiled_window_has_animated_width(
+        is_scrolling,
         is_overview,
         animating,
         animated_geometry,
@@ -6825,12 +6835,14 @@ fn live_resize_tile_is_pending(latest_size_committed: bool, resizing: bool) -> b
 }
 
 fn tiled_window_has_animated_width(
+    is_scrolling: bool,
     is_overview: bool,
     animating: bool,
     animated_geometry: &Rectangle<i32, Local>,
     target_geometry: &Rectangle<i32, Local>,
 ) -> bool {
-    !is_overview
+    is_scrolling
+        && !is_overview
         && animating
         && animated_geometry.size.w != target_geometry.size.w
         && animated_geometry.size.h == target_geometry.size.h
@@ -7214,6 +7226,7 @@ mod tests {
         let widening_target = Rectangle::new((0, 0).into(), (1_000, 390).into());
         let widening_frame = Rectangle::new((0, 0).into(), (830, 390).into());
         let widening_source = tiled_window_render_max_size(
+            true,
             false,
             true,
             false,
@@ -7233,6 +7246,7 @@ mod tests {
         let narrowing_target = Rectangle::new((0, 0).into(), (660, 390).into());
         let narrowing_frame = Rectangle::new((0, 0).into(), (830, 390).into());
         let narrowing_source = tiled_window_render_max_size(
+            true,
             false,
             true,
             false,
@@ -7252,6 +7266,7 @@ mod tests {
 
         assert_eq!(
             tiled_window_render_max_size(
+                true,
                 false,
                 false,
                 false,
@@ -7265,6 +7280,7 @@ mod tests {
             tiled_window_render_max_size(
                 true,
                 true,
+                true,
                 false,
                 &widening_frame,
                 &widening_target,
@@ -7276,6 +7292,7 @@ mod tests {
         let vertical_frame = Rectangle::new((0, 0).into(), (1_000, 300).into());
         assert_eq!(
             tiled_window_render_max_size(
+                true,
                 false,
                 true,
                 false,
@@ -7286,11 +7303,84 @@ mod tests {
             Some(vertical_frame.size.as_logical())
         );
         assert!(!tiled_window_has_animated_width(
+            true,
             false,
             true,
             &vertical_frame,
             &widening_target
         ));
+    }
+
+    #[test]
+    fn classic_width_animations_preserve_the_upstream_constraint_source() {
+        // Match the fork-point's Some(geo.size) and unconstrained shadow for
+        // both widening and narrowing, while retaining Scrolling's single
+        // interpolation from the target geometry.
+        let frame = Rectangle::new((50, 0).into(), (830, 390).into());
+        for width in [1_000, 660] {
+            let target = Rectangle::new((0, 0).into(), (width, 390).into());
+            for is_scrolling in [false, true] {
+                assert_eq!(
+                    tiled_window_has_animated_width(is_scrolling, false, true, &frame, &target),
+                    is_scrolling,
+                );
+                assert_eq!(
+                    tiled_window_render_max_size(
+                        is_scrolling,
+                        false,
+                        true,
+                        false,
+                        &frame,
+                        &target,
+                        target.size.as_logical(),
+                    ),
+                    Some(if is_scrolling {
+                        target.size.as_logical()
+                    } else {
+                        frame.size.as_logical()
+                    }),
+                );
+                // Neither overview nor a steady frame may take this path.
+                assert!(!tiled_window_has_animated_width(
+                    is_scrolling,
+                    true,
+                    true,
+                    &frame,
+                    &target
+                ));
+                assert!(!tiled_window_has_animated_width(
+                    is_scrolling,
+                    false,
+                    false,
+                    &frame,
+                    &target
+                ));
+                assert_eq!(
+                    tiled_window_render_max_size(
+                        is_scrolling,
+                        true,
+                        true,
+                        false,
+                        &frame,
+                        &target,
+                        target.size.as_logical(),
+                    ),
+                    None,
+                );
+                assert_eq!(
+                    tiled_window_render_max_size(
+                        is_scrolling,
+                        false,
+                        false,
+                        false,
+                        &frame,
+                        &target,
+                        target.size.as_logical(),
+                    ),
+                    Some(frame.size.as_logical()),
+                );
+            }
+        }
     }
 
     #[test]
@@ -7301,7 +7391,8 @@ mod tests {
 
         for tile in [widening_tile, narrowing_tile] {
             let source =
-                tiled_window_render_max_size(false, false, true, &tile, &tile, committed).unwrap();
+                tiled_window_render_max_size(true, false, false, true, &tile, &tile, committed)
+                    .unwrap();
             assert_eq!(source, committed);
 
             // The committed content is stretched or clipped exactly once to
@@ -7319,7 +7410,8 @@ mod tests {
         let shorter_lower = Rectangle::new((100, 510).into(), (660, 280).into());
         for tile in [taller_upper, shorter_lower] {
             let source =
-                tiled_window_render_max_size(false, false, true, &tile, &tile, committed).unwrap();
+                tiled_window_render_max_size(true, false, false, true, &tile, &tile, committed)
+                    .unwrap();
             assert_eq!(source, committed);
             let visible_height =
                 (f64::from(source.h) * f64::from(tile.size.h) / f64::from(source.h)).round() as i32;
@@ -7332,6 +7424,7 @@ mod tests {
 
         assert_eq!(
             tiled_window_render_max_size(
+                true,
                 true,
                 false,
                 true,
@@ -8418,5 +8511,96 @@ mod tests {
         layout.update_animation_state();
         assert_eq!(layout.queue.trees.len(), 1);
         assert!(layout.queue.trees.front().unwrap().2.is_none());
+    }
+
+    #[test]
+    fn classic_geometry_is_restored_after_an_engine_round_trip() {
+        let output = test_output();
+        output.change_current_state(
+            Some(Mode {
+                size: (1_200, 800).into(),
+                refresh: 60_000,
+            }),
+            None,
+            None,
+            Some((0, 0).into()),
+        );
+        let mut layout = TilingLayout::new(
+            cosmic::Theme::default(),
+            AppearanceConfig::default(),
+            &output,
+            TilingEngine::Classic,
+        );
+
+        let sentinel = Rectangle::from_size((7, 7).into());
+        let mut tree = Tree::new();
+        let root = tree
+            .insert(
+                Node::new(Data::Group {
+                    orientation: Orientation::Vertical,
+                    sizes: vec![400, 400, 400],
+                    last_geometry: Rectangle::new((0, 0).into(), (1_200, 800).into()),
+                    alive: Arc::new(()),
+                    pill_indicator: None,
+                }),
+                InsertBehavior::AsRoot,
+            )
+            .unwrap();
+        let insert_leaf = |tree: &mut Tree<Data>| {
+            tree.insert(
+                Node::new(Data::Placeholder {
+                    id: Id::new(),
+                    last_geometry: sentinel,
+                    type_: PlaceholderType::GrabbedWindow,
+                }),
+                InsertBehavior::UnderNode(&root),
+            )
+            .unwrap()
+        };
+        let leaves = [
+            insert_leaf(&mut tree),
+            insert_leaf(&mut tree),
+            insert_leaf(&mut tree),
+        ];
+
+        let blocker = layout.update_positions_for(&mut tree, layout.gaps());
+        layout.queue.trees.clear();
+        layout.queue.push_tree(tree, Duration::ZERO, blocker);
+
+        let leaf_geometries = |layout: &TilingLayout| {
+            leaves
+                .iter()
+                .map(|leaf| *layout.tree().get(leaf).unwrap().data().geometry())
+                .collect::<Vec<_>>()
+        };
+        let preorder = |layout: &TilingLayout| {
+            layout
+                .tree()
+                .traverse_pre_order_ids(&root)
+                .unwrap()
+                .collect::<Vec<_>>()
+        };
+
+        let before_geometries = leaf_geometries(&layout);
+        let before_preorder = preorder(&layout);
+        // Classic must actually have sized these leaves, otherwise the
+        // round-trip comparison below could pass without proving anything.
+        assert!(
+            before_geometries
+                .iter()
+                .all(|geometry| *geometry != sentinel)
+        );
+
+        for (index, geometry) in before_geometries.iter().enumerate() {
+            assert!(!before_geometries[..index].contains(geometry));
+        }
+
+        layout.set_mode(TilingEngine::Scrolling);
+        assert_ne!(leaf_geometries(&layout), before_geometries);
+        layout.set_mode(TilingEngine::Classic);
+
+        assert_eq!(layout.mode(), TilingEngine::Classic);
+        assert_eq!(leaf_geometries(&layout), before_geometries);
+        assert_eq!(preorder(&layout), before_preorder);
     }
 }

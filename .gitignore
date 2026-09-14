@@ -1,1 +1,12 @@
+/.cosmic-scrolling/
+
+# Private development reports, screenshots, and logs contain local paths.
+.codex-review/
+
+# Build artifacts can embed home directories and other local information.
 target/
+__pycache__/
+
+# Local agent workspace metadata.
+/.agents/
+/.codex/
