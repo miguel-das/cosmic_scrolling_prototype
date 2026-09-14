@@ -6,7 +6,12 @@ installer was invoked, with
 `COSMIC_SCROLLING_TILING=1`. The normal COSMIC session and
 `/usr/bin/cosmic-comp` are not replaced. Its COSMIC configuration is isolated
 in `target/scrolling-test-config`, so it does not change your normal COSMIC
-settings.
+settings. The rest of the desktop comes from the installed system COSMIC
+session. When the parent suite's `install.sh` has built the modified applet,
+this launcher also uses its owned `.cosmic-scrolling/prefix` for the Window
+Layout applet and icons. Without that optional installation, it uses system
+applets; use the CLI below to select Classic or Scrolling. For the complete
+compositor + applet installation, follow the [parent README](../README.md).
 
 No repository path is hardcoded. The installer creates
 `/usr/local/bin/cosmic-scrolling-test-session` as a symlink to this clone's
@@ -56,12 +61,27 @@ chmod +x start-scrolling-session.sh install-scrolling-session.sh
 
 Building only creates `target/debug/cosmic-comp`; it does not install a login
 session. The installer adds the stable launcher symlink and the greeter entry.
-It may request administrator authentication.
+It may request administrator authentication. It refuses to overwrite an
+unrecognized session entry or launcher at the test session's paths.
+
+To test the installer without changing the live greeter:
+
+```bash
+./install-scrolling-session.sh --destdir /tmp/cosmic-session-stage
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_*.py' -v
+```
+
+`DESTDIR=/absolute/staging/path` is also supported. A staged desktop file keeps
+its final `/usr/local/bin/` command; staging alone does not install a usable
+login entry.
 
 After later code changes, only `cargo build --locked` is required. Reinstall
 only after moving the clone or changing the session files.
 
 ## Start the session
+
+Do not invoke `start-scrolling-session.sh` inside a running desktop: it launches
+a full COSMIC session and now rejects that usage. Use the greeter:
 
 1. Save your work and log out of the current desktop session.
 2. Open the session chooser on the login screen.

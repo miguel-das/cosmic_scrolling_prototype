@@ -16,7 +16,7 @@ note() {
 }
 
 run_as_root() {
-    if [ "$(id -u)" -eq 0 ]; then
+    if [ -n "$DESTDIR" ] || [ "$(id -u)" -eq 0 ]; then
         "$@"
     else
         command -v sudo >/dev/null 2>&1 || die "required command not found: sudo"
@@ -25,10 +25,14 @@ run_as_root() {
 }
 
 PURGE_CONFIG=false
+DESTDIR=${DESTDIR-}
+while [ "$#" -gt 0 ]; do
 case "${1:-}" in
     -h|--help)
         cat <<'EOF'
-Usage: ./uninstall.sh [--purge-config]
+Usage: ./uninstall.sh [--purge-config] [--destdir ABSOLUTE_DIRECTORY]
+Use --destdir (or DESTDIR) to remove staged greeter files without sudo.
+The project-private applet is removed in either mode.
 
 Remove the COSMIC Scrolling Test greeter entry and private applet installation.
 Build caches are retained. Isolated session settings are retained unless
@@ -36,11 +40,20 @@ Build caches are retained. Isolated session settings are retained unless
 EOF
         exit 0
         ;;
-    --purge-config) PURGE_CONFIG=true ;;
-    '') ;;
+    --purge-config) PURGE_CONFIG=true; shift ;;
+    --destdir)
+        [ "$#" -ge 2 ] || die "--destdir requires an absolute directory"
+        DESTDIR=$2; shift 2 ;;
+    '') die "empty argument" ;;
     *) die "unknown argument: $1 (try --help)" ;;
 esac
-[ "$#" -le 1 ] || die "too many arguments (try --help)"
+done
+case "$DESTDIR" in
+    ""|/*) ;;
+    *) die "DESTDIR must be an absolute directory" ;;
+esac
+SYSTEM_LAUNCHER="$DESTDIR$SYSTEM_LAUNCHER"
+SYSTEM_DESKTOP="$DESTDIR$SYSTEM_DESKTOP"
 
 command -v readlink >/dev/null 2>&1 || die "required command not found: readlink"
 SCRIPT_PATH=$(readlink -f -- "$0") || die "cannot resolve the uninstaller path"
@@ -51,8 +64,19 @@ PREFIX="$STATE_ROOT/prefix"
 SOURCE_LAUNCHER="$COMP_ROOT/start-scrolling-session.sh"
 CONFIG_ROOT="$COMP_ROOT/target/scrolling-test-config"
 
+# Do not follow redirected installation directories when writing/removing files.
+for owned_directory in "$STATE_ROOT" "$PREFIX" "$PREFIX/bin" "$PREFIX/share" \
+    "$PREFIX/share/applications" "$PREFIX/share/icons" \
+    "$PREFIX/share/icons/hicolor" "$PREFIX/share/icons/hicolor/scalable" \
+    "$PREFIX/share/icons/hicolor/scalable/apps"; do
+    [ ! -L "$owned_directory" ] || die "refusing a symlinked installation directory: $owned_directory"
+done
+[ ! -L "$STATE_ROOT/manifest" ] || die "refusing a symlinked ownership manifest"
+
 # Check ownership of every shared path before removing anything.
-if [ -e "$SYSTEM_DESKTOP" ]; then
+if [ -e "$SYSTEM_DESKTOP" ] || [ -L "$SYSTEM_DESKTOP" ]; then
+    [ ! -L "$SYSTEM_DESKTOP" ] && [ -f "$SYSTEM_DESKTOP" ] \
+        || die "refusing to remove a non-regular desktop entry: $SYSTEM_DESKTOP"
     grep -q "^X-CosmicScrollingOwner=$OWNER_ID\$" "$SYSTEM_DESKTOP" 2>/dev/null \
         || die "refusing to remove an unowned desktop entry: $SYSTEM_DESKTOP"
 fi
@@ -66,7 +90,10 @@ if [ -e "$SYSTEM_LAUNCHER" ] || [ -L "$SYSTEM_LAUNCHER" ]; then
 fi
 
 PRIVATE_FILES_EXIST=false
-if [ -e "$PREFIX/bin/cosmic-applet-tiling" ] \
+if [ -L "$PREFIX/bin/cosmic-comp" ] \
+    || [ -e "$PREFIX/bin/cosmic-comp" ] \
+    || [ -L "$PREFIX/bin/cosmic-applet-tiling" ] \
+    || [ -e "$PREFIX/bin/cosmic-applet-tiling" ] \
     || [ -e "$PREFIX/share/applications/com.system76.CosmicAppletTiling.desktop" ]; then
     PRIVATE_FILES_EXIST=true
 fi
@@ -78,7 +105,7 @@ elif [ "$PRIVATE_FILES_EXIST" = true ]; then
 fi
 
 if [ "${XDG_CONFIG_HOME:-}" = "$CONFIG_ROOT" ]; then
-    note "Warning: this appears to be the active test session; log into normal COSMIC before the next login."
+    die "log into normal COSMIC before uninstalling the active test session"
 fi
 
 if [ -e "$SYSTEM_DESKTOP" ]; then

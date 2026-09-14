@@ -89,10 +89,9 @@ pub fn spawn_workspaces(tx: mpsc::Sender<TilingState>) -> SyncSender<AppRequest>
                 .insert_source(workspaces_rx, |e, (), state| match e {
                     Event::Msg(AppRequest::TilingState(autotile)) => {
                         if let Some(w) = state.workspace_state.workspace_groups().find_map(|g| {
-                            if let Some(o) = state.expected_output.as_ref() {
-                                if !g.outputs.contains(o) {
-                                    return None;
-                                }
+                            let output = state.expected_output.as_ref()?;
+                            if !g.outputs.contains(output) {
+                                return None;
                             }
                             g.workspaces
                                 .iter()
@@ -132,6 +131,7 @@ pub fn spawn_workspaces(tx: mpsc::Sender<TilingState>) -> SyncSender<AppRequest>
                             .commit();
                     }
                     Event::Closed => {
+                        state.running = false;
                         if let Ok(workspace_manager) =
                             state.workspace_state.workspace_manager().get()
                         {
@@ -231,18 +231,22 @@ impl OutputHandler for State {
 
     fn update_output(
         &mut self,
-        _conn: &Connection,
-        _qh: &QueueHandle<Self>,
-        _output: wl_output::WlOutput,
+        conn: &Connection,
+        qh: &QueueHandle<Self>,
+        output: wl_output::WlOutput,
     ) {
+        self.new_output(conn, qh, output);
     }
 
     fn output_destroyed(
         &mut self,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
-        _output: wl_output::WlOutput,
+        output: wl_output::WlOutput,
     ) {
+        if self.expected_output.as_ref() == Some(&output) {
+            self.expected_output = None;
+        }
     }
 }
 

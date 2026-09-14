@@ -13,27 +13,34 @@ hash in the package version identifies the matching `cosmic-applets` commit:
 dpkg-query -W -f='${Version}\n' cosmic-applets
 ```
 
-Check out that official revision and place this package at its
-`cosmic-applet-tiling/` member path. Make the modified `cosmic-comp` clone
-available as `cosmic-comp/` beside that package inside the temporary workspace
-(a local symlink is sufficient), then run:
+From the parent project, use the supported assembly/build procedure:
 
 ```bash
-cargo test --locked -p cosmic-applet-tiling
-cargo build --locked -p cosmic-applet-tiling
+./install.sh --build-only
 ```
 
-The relative `../cosmic-comp/cosmic-comp-config` dependency is intentional for
-the current sibling-source development layout and contains the new
-`TilingEngine` setting. Before upstreaming or packaging this applet, replace it
-with a published version or a committed `cosmic-comp` revision that includes
-`TilingEngine`; do not publish a package that depends on a local path.
+It copies this applet into a disposable matching upstream workspace and takes
+`cosmic-comp-config` from `cosmic-comp-scrolling-prototype`. It narrows the
+copied config manifest to the default API needed by the applet, reconciles the
+lockfile for that path dependency, then runs tests and a locked build. Neither
+the reference `cosmic-comp` folder nor your original applet sources are rewritten.
+The assembled workspace and lockfile remain in `.cosmic-scrolling/build-workspace`.
+Rerun the installer after editing this source; do not edit that generated copy.
+
+The relative `../cosmic-comp/cosmic-comp-config` dependency refers to the
+**assembled workspace**, not the parent's upstream reference checkout.
+Before upstreaming or packaging, use a committed dependency revision containing
+`TilingEngine` and provide a reproducible workspace/lockfile.
+
+The suite installs the default binary in `.cosmic-scrolling/prefix`, visible
+only through the isolated session's search paths. Run `../uninstall.sh` from
+this directory to remove that installation; normal COSMIC remains untouched.
 
 The technical package name, binary, desktop ID, and icon namespace remain
 `cosmic-applet-tiling` / `com.system76.CosmicAppletTiling` for compatibility
 with existing COSMIC panel configurations.
 
-For a parallel development installation that does not replace the packaged
+For a separate, manually managed parallel development installation that does not replace the packaged
 tiling applet, build with `--features parallel-test-install`. Install the
 result under the separate executable and desktop identity:
 
@@ -79,3 +86,12 @@ Run the applet with the modified compositor, then verify:
    default tiling state; a tiled new workspace uses the selected global engine.
 7. The panel icon distinguishes Floating, Classic Tiling, and Scrolling, while
    active-hint and window-management controls continue to work.
+
+8. Rapid mode clicks must not leave the engine at an earlier requested mode;
+   the selector is temporarily disabled while its config write completes.
+   A failed engine write must not enable workspace tiling or show a false mode.
+9. On multiple outputs, the applet must control its own panel output. Recheck
+   after output removal/reconnection; it must never fall back to another output.
+
+The alternate `parallel-test-install` feature is not installed or removed by
+the suite scripts. Its manual files above are a separate development option.
